@@ -29,14 +29,17 @@ def extract_features(events):
 
     # ── Dwell Time：按字符逐一匹配（正确处理重复字符）──
     dwell_times = []
-    for i, ch in enumerate(TARGET):
+    occurrences = {}
+    for ch in TARGET:
         # 找出该字符所有出现的 down/up 时间戳列表
         d_list = [t for k, t in down_seq if k == ch]
         u_list = [t for k, t in up_seq   if k == ch]
-        if i < len(d_list) and i < len(u_list):
-            dwell_times.append(u_list[i] - d_list[i])
+        occurrence = occurrences.get(ch, 0)
+        occurrences[ch] = occurrence + 1
+        if occurrence < len(d_list) and occurrence < len(u_list):
+            dwell_times.append(u_list[occurrence] - d_list[occurrence])
         else:
-            dwell_times.append(0.0)  # 异常情况补零，后续维度校验会拦截
+            return None
 
     # ── DD Flight Time：相邻两次按下的时间差 ──
     dd_times = [

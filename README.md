@@ -25,7 +25,9 @@ Open http://127.0.0.1:5000. Use a simple demo ID, collect your own samples, then
 
 ## Limitations
 
-This prototype is not a production biometric authentication system. No representative population evaluation, liveness/replay protection, robust rate limiting or template encryption is claimed. Only load model pickle files you generated locally. The initial coursework feature extraction and endpoint input handling require review before any wider use; imported snapshots retain the original implementation for transparency.
+This prototype is not a production biometric authentication system. No representative population evaluation, liveness/replay protection, robust rate limiting or template encryption is claimed. Only load model pickle files you generated locally. Publication preparation fixes occurrence indexing for repeated letters and adds three synthetic regression cases. Endpoint input handling and the overall authentication design still require review before any wider use; imported snapshots retain the original implementation for transparency.
+
+Run synthetic checks: `python -m unittest discover -s tests -v`.
 
 ## Development and provenance
 
