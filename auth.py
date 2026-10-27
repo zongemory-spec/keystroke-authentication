@@ -1,7 +1,11 @@
+"""Fixed-text timing feature extraction and local demo templates."""
 import pandas as pd
 import numpy as np
 import os
 import pickle
+import math
+import re
+from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 
 
@@ -9,59 +13,103 @@ from sklearn.preprocessing import StandardScaler
 TARGET     = "hello world"   # 目标字符串，与前端保持一致
 TARGET_LEN = len(TARGET)     # 11
 
-DATA_DIR  = "data"
-MODEL_DIR = "models"
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+MODEL_DIR = ROOT / "models"
+FEATURE_COUNT = TARGET_LEN * 3 - 2
+_USER_ID = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+_SUFFIXES = {".csv", "_scaler.pkl", "_template.pkl", "_cov_inv.pkl", "_threshold.pkl"}
 
-os.makedirs(DATA_DIR,  exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
+
+class InputError(ValueError):
+    """Invalid input, safe to report without revealing local file paths."""
+
+
+def validate_user_id(user_id):
+    if (not isinstance(user_id, str) or not _USER_ID.fullmatch(user_id)
+            or user_id.upper() in _RESERVED):
+        raise InputError("user_id 只能包含 1–64 位英文字母、数字、下划线或短横线，且不能使用系统保留名称")
+    return user_id
+
+
+def safe_user_path(directory, user_id, suffix):
+    validate_user_id(user_id)
+    if suffix not in _SUFFIXES:
+        raise InputError("文件类型不正确")
+    root = Path(directory).resolve()
+    candidate = root / (user_id + suffix)
+    if candidate.is_symlink():
+        raise InputError("不允许使用链接文件")
+    resolved = candidate.resolve()
+    if resolved.parent != root:
+        raise InputError("文件位置不正确")
+    return resolved
 # ─────────────────────────────────────────────────────────────
 
 
 def extract_features(events):
+    """Validate the exact text and pair each release with its press.
 
-    # 按顺序分离 down / up 序列
-    down_seq = [(e['key'], e['timestamp']) for e in events if e['action'] == 'down']
-    up_seq   = [(e['key'], e['timestamp']) for e in events if e['action'] == 'up']
-
-    # 维度校验：down 和 up 数量必须都等于目标字符串长度
-    if len(down_seq) != TARGET_LEN or len(up_seq) != TARGET_LEN:
+    Different keys may overlap, including a negative up-to-next-down interval.
+    """
+    if not isinstance(events, list) or len(events) != TARGET_LEN * 2:
         return None
-
-    # ── Dwell Time：按字符逐一匹配（正确处理重复字符）──
-    dwell_times = []
-    occurrences = {}
-    for ch in TARGET:
-        # 找出该字符所有出现的 down/up 时间戳列表
-        d_list = [t for k, t in down_seq if k == ch]
-        u_list = [t for k, t in up_seq   if k == ch]
-        occurrence = occurrences.get(ch, 0)
-        occurrences[ch] = occurrence + 1
-        if occurrence < len(d_list) and occurrence < len(u_list):
-            dwell_times.append(u_list[occurrence] - d_list[occurrence])
-        else:
+    down_times, up_times, pressed = [], [], {}
+    previous = -1.0
+    for event in events:
+        if not isinstance(event, dict) or set(event) != {"key", "action", "timestamp"}:
             return None
+        key, action, raw_time = event["key"], event["action"], event["timestamp"]
+        if not isinstance(key, str) or len(key) != 1 or action not in ("down", "up"):
+            return None
+        if type(raw_time) not in (int, float):
+            return None
+        try:
+            timestamp = float(raw_time)
+        except (OverflowError, ValueError):
+            return None
+        if not math.isfinite(timestamp) or timestamp < 0 or timestamp < previous:
+            return None
+        previous = timestamp
+        if action == "down":
+            index = len(down_times)
+            if index >= TARGET_LEN or key != TARGET[index] or key in pressed:
+                return None
+            pressed[key] = index
+            down_times.append(timestamp)
+            up_times.append(None)
+        else:
+            index = pressed.pop(key, None)
+            if index is None or timestamp <= down_times[index]:
+                return None
+            up_times[index] = timestamp
+    if pressed or len(down_times) != TARGET_LEN or any(t is None for t in up_times):
+        return None
+    with np.errstate(over="ignore", invalid="ignore"):
+        down, up = np.asarray(down_times), np.asarray(up_times)
+        features = np.concatenate((up - down, np.diff(down), down[1:] - up[:-1]))
+    return features if np.isfinite(features).all() else None
 
-    # ── DD Flight Time：相邻两次按下的时间差 ──
-    dd_times = [
-        down_seq[i][1] - down_seq[i - 1][1]
-        for i in range(1, len(down_seq))
-    ]
 
-    # ── UD Flight Time：上一键弹起到当前键按下的时间差 ──
-    ud_times = [
-        down_seq[i][1] - up_seq[i - 1][1]
-        for i in range(1, len(up_seq))
-    ]
-
-    return np.array(dwell_times + dd_times + ud_times)  # shape: (31,)
+def validate_feature_matrix(data):
+    if (data.ndim != 2 or data.shape[1] != FEATURE_COUNT or not np.isfinite(data).all()
+            or np.any(data[:, :TARGET_LEN] <= 0)
+            or np.any(data[:, TARGET_LEN:2 * TARGET_LEN - 1] < 0)):
+        raise InputError("样本数值或格式无效，请备份旧数据后重新采集")
 
 
 def load_user_data(user_id):
     """读取指定用户的全部历史特征数据，返回 numpy 数组。"""
-    file_path = os.path.join(DATA_DIR, f"{user_id}.csv")
+    file_path = safe_user_path(DATA_DIR, user_id, ".csv")
     if not os.path.exists(file_path):
         return None
-    return pd.read_csv(file_path, header=None).values  # shape: (n_samples, 31)
+    try:
+        data = pd.read_csv(file_path, header=None, dtype=float).values
+    except (OSError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        raise InputError("无法读取有效样本，请检查本地采集数据") from None
+    validate_feature_matrix(data)
+    return data
 
 
 def build_template(user_id, k=1.7):
@@ -75,6 +123,9 @@ def build_template(user_id, k=1.7):
     6. 将 scaler、template、cov_inv 和 threshold 保存到 models/ 目录
 
     """
+    validate_user_id(user_id)
+    if type(k) not in (int, float) or not math.isfinite(k) or k <= 0:
+        raise InputError("阈值参数无效")
     data = load_user_data(user_id)
     if data is None or len(data) < 32:
         return False, "数据量太少（马氏距离至少需要32条，建议50条以上）"
@@ -92,7 +143,7 @@ def build_template(user_id, k=1.7):
     distances = []
     for row in scaled_data:
         diff      = row - template
-        dist      = float(np.sqrt(diff @ cov_inv @ diff))
+        dist      = float(np.sqrt(max(float(diff @ cov_inv @ diff), 0)))
         distances.append(dist)
 
     distances   = np.array(distances)
@@ -100,28 +151,38 @@ def build_template(user_id, k=1.7):
     dist_std    = float(np.std(distances))
     threshold   = float(dist_mean + k * dist_std)
 
-    with open(os.path.join(MODEL_DIR, f"{user_id}_scaler.pkl"),    'wb') as f:
+    if not math.isfinite(threshold) or threshold <= 0:
+        return False, "样本变化不足，无法建立有效阈值，请按自然节奏重新采集"
+    paths = {name:safe_user_path(MODEL_DIR,user_id,f"_{name}.pkl")
+             for name in ("scaler","template","cov_inv","threshold")}
+    Path(MODEL_DIR).mkdir(parents=True, exist_ok=True)
+
+    with open(paths['scaler'], 'wb') as f:
         pickle.dump(scaler, f)
-    with open(os.path.join(MODEL_DIR, f"{user_id}_template.pkl"),  'wb') as f:
+    with open(paths['template'], 'wb') as f:
         pickle.dump(template, f)
-    with open(os.path.join(MODEL_DIR, f"{user_id}_cov_inv.pkl"),    'wb') as f:
+    with open(paths['cov_inv'], 'wb') as f:
         pickle.dump(cov_inv, f)
-    with open(os.path.join(MODEL_DIR, f"{user_id}_threshold.pkl"), 'wb') as f:
+    with open(paths['threshold'], 'wb') as f:
         pickle.dump(threshold, f)
 
-    print(f"[{user_id}] 距离均值={dist_mean:.3f}  标准差={dist_std:.3f}  阈值={threshold:.3f}")
     return True, f"成功（数据{len(data)}条，自适应阈值={threshold:.3f}）"
 
 
 def build_all_templates():
     """遍历 data/ 目录，为所有用户重新生成模板，返回结果字典。"""
     results = {}
-    for filename in os.listdir(DATA_DIR):
-        if filename.endswith(".csv"):
-            user_id = filename.replace(".csv", "")
+    for path in sorted(Path(DATA_DIR).glob('*.csv')):
+        try:
+            user_id = validate_user_id(path.stem)
+            safe_user_path(DATA_DIR, user_id, '.csv')
+        except InputError:
+            continue
+        try:
             success, msg = build_template(user_id)
             results[user_id] = msg
-            print(f"[build_template] {user_id}: {msg}")
+        except (ValueError, OverflowError, OSError, FloatingPointError, np.linalg.LinAlgError):
+            results[user_id] = "构建失败，请检查本地样本或目录权限"
     return results
 
 
@@ -137,10 +198,13 @@ def authenticate_user(user_id, feature_vector):
       - passed=None 表示发生错误，distance 为错误信息字符串
       - passed=True/False 时，distance 为 float 距离值，threshold 为该用户的专属阈值
     """
-    scaler_path    = os.path.join(MODEL_DIR, f"{user_id}_scaler.pkl")
-    template_path  = os.path.join(MODEL_DIR, f"{user_id}_template.pkl")
-    cov_inv_path   = os.path.join(MODEL_DIR, f"{user_id}_cov_inv.pkl")
-    threshold_path = os.path.join(MODEL_DIR, f"{user_id}_threshold.pkl")
+    validate_user_id(user_id)
+    feature_vector = np.asarray(feature_vector, dtype=float)
+    validate_feature_matrix(feature_vector.reshape(1, -1))
+    scaler_path = safe_user_path(MODEL_DIR, user_id, '_scaler.pkl')
+    template_path = safe_user_path(MODEL_DIR, user_id, '_template.pkl')
+    cov_inv_path = safe_user_path(MODEL_DIR, user_id, '_cov_inv.pkl')
+    threshold_path = safe_user_path(MODEL_DIR, user_id, '_threshold.pkl')
 
     if not os.path.exists(scaler_path) or not os.path.exists(template_path) or not os.path.exists(cov_inv_path) or not os.path.exists(threshold_path):
         return None, "该用户尚未构建模板，请先采集数据并点击构建模板", None
@@ -154,11 +218,17 @@ def authenticate_user(user_id, feature_vector):
     with open(threshold_path, 'rb') as f:
         threshold = pickle.load(f)
 
+    if (not isinstance(template, np.ndarray) or template.shape != (FEATURE_COUNT,)
+            or not isinstance(cov_inv, np.ndarray) or cov_inv.shape != (FEATURE_COUNT, FEATURE_COUNT)
+            or not np.isfinite(template).all() or not np.isfinite(cov_inv).all()
+            or type(threshold) not in (int, float) or not math.isfinite(threshold) or threshold <= 0):
+        raise InputError("本地模板无效，请使用本机采集数据重新构建")
+
     new_vec_scaled = scaler.transform(feature_vector.reshape(1, -1))[0]
     diff           = new_vec_scaled - template
-    distance       = float(np.sqrt(diff @ cov_inv @ diff))
-
-    print(f"[auth] user={user_id}  distance={distance:.4f}  threshold={threshold:.4f}")
+    distance       = float(np.sqrt(max(float(diff @ cov_inv @ diff), 0)))
+    if not math.isfinite(distance):
+        raise InputError("认证数值无效，请重新采集")
 
     passed = bool(distance < threshold)
     return passed, distance, threshold

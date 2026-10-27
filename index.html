@@ -170,7 +170,7 @@
 
 typeInput.addEventListener("keydown", function(e) {
     if (e.key === "Backspace") { removeLastChar(keyEvents); return; }
-    if (e.key.length === 1) {
+    if (e.key.length === 1 && !e.repeat) {
         keyEvents.push({ key: e.key, action: "down", timestamp: performance.now() });
     }
 });
@@ -182,7 +182,7 @@ typeInput.addEventListener("keyup", function(e) {
 
 authInput.addEventListener("keydown", function(e) {
     if (e.key === "Backspace") { removeLastChar(authEvents); return; }
-    if (e.key.length === 1) {
+    if (e.key.length === 1 && !e.repeat) {
         authEvents.push({ key: e.key, action: "down", timestamp: performance.now() });
     }
 });
@@ -234,14 +234,14 @@ authInput.addEventListener("keyup", function(e) {
             .then(r => r.json())
             .then(data => {
                 if (data.status === "ok") {
+                    resetCollect();
                     sessionCount++;
                     document.getElementById("countDisplay").innerText =
                         `已采集：${sessionCount} 条（本次会话）`;
                     statusEl.className = "status ok";
                     statusEl.innerText =
                         `✓ 第 ${data.total} 条样本保存成功！` +
-                        (data.total < 10 ? `（建议至少采集 30 条，当前 ${data.total} 条）` : "");
-                    resetCollect();
+                        (data.total < 32 ? `（至少采集 32 条，建议 50 条以上；当前 ${data.total} 条）` : "");
                 } else {
                     statusEl.className = "status err";
                     statusEl.innerText = "错误：" + data.error;
@@ -266,6 +266,11 @@ authInput.addEventListener("keyup", function(e) {
             fetch("/build_templates", { method: "POST" })
             .then(r => r.json())
             .then(data => {
+                if (data.error) {
+                    statusEl.className = "status err";
+                    statusEl.innerText = data.error;
+                    return;
+                }
                 const userCount = Object.keys(data.details || {}).length;
                 if (userCount === 0) {
                     // data/ 目录下没有任何 CSV 文件
@@ -276,8 +281,8 @@ authInput.addEventListener("keyup", function(e) {
                     const detail = Object.entries(data.details)
                         .map(([uid, msg]) => `${uid}: ${msg}`)
                         .join("　|　");
-                    statusEl.className = "status ok";
-                    statusEl.innerText = `✓ 已为 ${userCount} 个用户构建模板。${detail}`;
+                    statusEl.className = data.failed ? "status warn" : "status ok";
+                    statusEl.innerText = `构建结果：成功 ${data.built} 位，未成功 ${data.failed} 位。${detail}`;
                 }
             })
             .catch(() => {
@@ -354,7 +359,7 @@ authInput.addEventListener("keyup", function(e) {
                     <strong>${isPass ? '✓ 认证通过' : '✗ 认证拒绝'}</strong><br><br>
                     声称身份：<strong>${data.claimed}</strong><br>
                     马氏距离：<strong>${dist}</strong>
-                    （阈值 ${thresh}，距离${isPass ? '<' : '>'}阈值则${isPass ? '通过' : '拒绝'}）
+                    （阈值 ${thresh}，距离${isPass ? '<' : '≥'}阈值则${isPass ? '通过' : '拒绝'}）
                     <div class="distance-bar-wrap" title="距离 / 阈值×2">
                         <div class="distance-bar ${isPass ? 'bar-pass' : 'bar-fail'}"
                              style="width:${barPct}%"></div>

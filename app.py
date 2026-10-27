@@ -1,15 +1,42 @@
 from flask import Flask, request, jsonify
 import csv
 import os
-from auth import extract_features, authenticate_user, build_all_templates, DATA_DIR
+import pickle
+from pathlib import Path
+from werkzeug.exceptions import RequestEntityTooLarge
+from auth import (extract_features, authenticate_user, build_all_templates, DATA_DIR,
+                  InputError, validate_user_id, safe_user_path)
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024
+
+
+@app.errorhandler(InputError)
+def invalid_input(exc):
+    return jsonify(status='error', error=str(exc)), 400
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def oversized(_exc):
+    return jsonify(status='error', error='请求过大，请只提交一次完整输入'), 413
+
+
+def request_features():
+    if not request.is_json:
+        raise InputError('请发送 JSON 请求')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'user_id', 'events'}:
+        raise InputError('请求必须包含 user_id 和 events，且不能包含其他字段')
+    uid = validate_user_id(data['user_id'])
+    features = extract_features(data['events'])
+    if features is None:
+        raise InputError('按键数据无效，请完整输入 hello world 并松开全部按键后重试')
+    return uid, features
 
 
 @app.route('/')
 def index():
-    with open('index.html', 'r', encoding='utf-8') as f:
-        return f.read()
+    return Path(__file__).with_name('index.html').read_text(encoding='utf-8')
 
 
 @app.route('/collect', methods=['POST'])
@@ -19,34 +46,18 @@ def collect():
     请求体：{ user_id: str, events: [...] }
     返回：{ status: 'ok', total: int } 或 { status: 'error', error: str }
     """
-    data    = request.json
-    user_id = (data.get('user_id') or '').strip()
-    events  = data.get('events', [])
-
-    if not user_id:
-        return jsonify({"status": "error", "error": "缺少 user_id"}), 400
-    if not events:
-        return jsonify({"status": "error", "error": "没有收到按键数据"}), 400
-
-    # 特征提取（含维度校验）
-    features = extract_features(events)
-    if features is None:
-        return jsonify({
-            "status": "error",
-            "error": "按键数据不完整或维度不对，请重新输入完整的目标文本"
-        }), 400
+    user_id, features = request_features()
 
     # 追加保存到 CSV（无表头，纯数值行）
-    file_path = os.path.join(DATA_DIR, f"{user_id}.csv")
-    with open(file_path, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(features.tolist())
-
-    # 统计该用户当前总条数
-    with open(file_path, 'r', encoding='utf-8') as f:
-        total = sum(1 for _ in f)
-
-    print(f"[collect] user={user_id}  total={total}")
+    file_path = safe_user_path(DATA_DIR, user_id, '.csv')
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with file_path.open('a', newline='', encoding='utf-8') as f:
+            csv.writer(f).writerow(features.tolist())
+        with file_path.open(encoding='utf-8') as f:
+            total = sum(1 for _ in f)
+    except OSError:
+        return jsonify(status='error', error='保存失败，请检查本地目录权限'), 500
     return jsonify({"status": "ok", "total": total})
 
 
@@ -58,24 +69,13 @@ def authenticate():
     返回：{ passed: bool, distance: float, threshold: float, claimed: str }
          或 { error: str }
     """
-    data    = request.json
-    user_id = (data.get('user_id') or '').strip()
-    events  = data.get('events', [])
-
-    if not user_id:
-        return jsonify({"error": "缺少 user_id"}), 400
-    if not events:
-        return jsonify({"error": "没有收到按键数据"}), 400
-
-    # 特征提取（与 /collect 使用同一函数，保证特征一致）
-    features = extract_features(events)
-    if features is None:
-        return jsonify({
-            "error": "按键数据不完整或维度不对，请重新输入完整的目标文本"
-        }), 400
-
-    # 单用户异常检测
-    passed, distance, threshold = authenticate_user(user_id, features)
+    user_id, features = request_features()
+    try:
+        passed, distance, threshold = authenticate_user(user_id, features)
+    except InputError:
+        raise
+    except (OSError, ValueError, TypeError, AttributeError, EOFError, pickle.UnpicklingError):
+        return jsonify(status='error', error='本地模板无法使用，请备份数据后重新构建'), 400
 
     if isinstance(distance, str):
         return jsonify({"error": distance}), 400
@@ -95,10 +95,13 @@ def build_templates():
     返回：{ status: 'ok', message: str, details: { user_id: msg } }
     """
     results = build_all_templates()
+    built = sum(message.startswith('成功') for message in results.values())
     return jsonify({
         "status":  "ok",
         "message": "模板构建完成",
-        "details": results
+        "details": results,
+        "built": built,
+        "failed": len(results) - built
     })
 
 
@@ -109,12 +112,15 @@ def status():
     if os.path.isdir(DATA_DIR):
         for fname in os.listdir(DATA_DIR):
             if fname.endswith('.csv'):
-                uid       = fname[:-4]
-                file_path = os.path.join(DATA_DIR, fname)
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    result[uid] = sum(1 for _ in f)
+                try:
+                    uid = validate_user_id(fname[:-4])
+                    file_path = safe_user_path(DATA_DIR, uid, '.csv')
+                    with file_path.open(encoding='utf-8') as f:
+                        result[uid] = sum(1 for _ in f)
+                except (InputError, OSError, UnicodeError):
+                    continue
     return jsonify(result)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host='127.0.0.1', debug=False, port=5000)
