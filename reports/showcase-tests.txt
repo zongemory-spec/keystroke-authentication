@@ -1,0 +1,34 @@
+test_all_library_entrypoints_reject_unsafe_id (test_api.APITests.test_all_library_entrypoints_reject_unsafe_id) ... ok
+test_collect_and_status_have_expected_shape (test_api.APITests.test_collect_and_status_have_expected_shape) ... ok
+test_constant_samples_do_not_produce_zero_threshold_model (test_api.APITests.test_constant_samples_do_not_produce_zero_threshold_model) ... ok
+test_corrupt_csv_is_reported_without_partial_model (test_api.APITests.test_corrupt_csv_is_reported_without_partial_model) ... ok
+test_full_synthetic_collect_build_auth_flow (test_api.APITests.test_full_synthetic_collect_build_auth_flow) ... ok
+test_homepage_is_read_from_project_not_current_directory (test_api.APITests.test_homepage_is_read_from_project_not_current_directory) ... ok
+test_insufficient_samples_do_not_create_models (test_api.APITests.test_insufficient_samples_do_not_create_models) ... ok
+test_invalid_ids_cannot_create_files (test_api.APITests.test_invalid_ids_cannot_create_files) ... ok
+test_malformed_bodies_return_json_without_writes (test_api.APITests.test_malformed_bodies_return_json_without_writes) ... ok
+test_missing_template_and_empty_build_are_clear (test_api.APITests.test_missing_template_and_empty_build_are_clear) ... ok
+test_request_size_limit_returns_json_413 (test_api.APITests.test_request_size_limit_returns_json_413) ... ok
+test_symlink_targets_are_not_read_or_written (test_api.APITests.test_symlink_targets_are_not_read_or_written) ... ok
+test_wrong_text_and_invalid_timestamps_never_reach_storage (test_api.APITests.test_wrong_text_and_invalid_timestamps_never_reach_storage) ... ok
+test_deterministic_generator_has_valid_events (test_evidence.EvidenceTests.test_deterministic_generator_has_valid_events) ... ok
+test_holdout_and_report_boundaries (test_evidence.EvidenceTests.test_holdout_and_report_boundaries) ... ok
+test_report_detects_nonfinite_validation_regression (test_evidence.EvidenceTests.test_report_detects_nonfinite_validation_regression) ... ok
+test_incomplete_input_is_rejected (test_features.FeatureRegressionTests.test_incomplete_input_is_rejected) ... ok
+test_repeated_letters_keep_nonzero_dwell (test_features.FeatureRegressionTests.test_repeated_letters_keep_nonzero_dwell) ... ok
+test_wrong_character_counts_are_rejected (test_features.FeatureRegressionTests.test_wrong_character_counts_are_rejected) ... ok
+test_bad_event_shapes_are_rejected (test_validation.ValidationTests.test_bad_event_shapes_are_rejected) ... ok
+test_non_numeric_nonfinite_and_huge_times_are_rejected (test_validation.ValidationTests.test_non_numeric_nonfinite_and_huge_times_are_rejected) ... ok
+test_out_of_order_event_times_are_rejected (test_validation.ValidationTests.test_out_of_order_event_times_are_rejected) ... ok
+test_release_before_press_is_rejected (test_validation.ValidationTests.test_release_before_press_is_rejected) ... ok
+test_repeat_key_before_release_is_rejected (test_validation.ValidationTests.test_repeat_key_before_release_is_rejected) ... ok
+test_reserved_names_and_path_syntax_are_rejected (test_validation.ValidationTests.test_reserved_names_and_path_syntax_are_rejected) ... ok
+test_rollover_pairs_releases_by_press_not_release_order (test_validation.ValidationTests.test_rollover_pairs_releases_by_press_not_release_order) ... ok
+test_same_time_release_is_rejected (test_validation.ValidationTests.test_same_time_release_is_rejected) ... ok
+test_unmatched_and_duplicate_releases_are_rejected (test_validation.ValidationTests.test_unmatched_and_duplicate_releases_are_rejected) ... ok
+test_wrong_order_with_same_character_counts_is_rejected (test_validation.ValidationTests.test_wrong_order_with_same_character_counts_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 29 tests in 5.414s
+
+OK
