@@ -1,13 +1,383 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="使用虚构数据演示 SQL 拼接与登录绕过的本地教学模拟器。">
-  <title>SQL 拼接与登录绕过 · 教学模拟器</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>击键动力学身份认证系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <style>
+        .target {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary);
+            background: var(--primary-inverse);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            display: inline-block;
+            margin: 1rem 0;
+            letter-spacing: 0.05em;
+        }
+        .status, .result-box {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            display: none;
+        }
+        .ok  { display: block; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .err { display: block; background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .warn{ display: block; background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .count { color: var(--muted-color); font-size: 0.875rem; margin: 0.5rem 0; }
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+        .tabs button {
+            border: none; background: transparent;
+            padding: 0.75rem 1.5rem; cursor: pointer;
+            border-radius: 0; border-bottom: 2px solid transparent;
+            color: var(--muted-color);
+        }
+        .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .distance-bar-wrap {
+            margin-top: 0.75rem;
+            background: #e9ecef;
+            border-radius: 4px;
+            height: 10px;
+            overflow: hidden;
+        }
+        .distance-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.4s ease;
+        }
+        .bar-pass { background: #28a745; }
+        .bar-fail { background: #dc3545; }
+    </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+    <main class="container">
+        <header>
+            <hgroup>
+                <h1>击键动力学身份认证</h1>
+                <h2>基于马氏距离的单用户模板匹配方案</h2>
+            </hgroup>
+        </header>
+
+        <!-- 标签页 -->
+        <div class="tabs">
+            <button class="active" onclick="showTab('collect', this)">① 数据采集</button>
+            <button onclick="showTab('auth', this)">② 身份认证</button>
+        </div>
+
+        <!-- ══════════ 数据采集面板 ══════════ -->
+        <article id="collect" class="tab-content active">
+            <h3>第一步：采集数据并构建模板</h3>
+
+            <label for="userSelect">选择用户名</label>
+            <select id="userSelect">
+                <option value="">-- 请选择 --</option>
+                <option value="userA">用户 A</option>
+                <option value="userB">用户 B</option>
+                <option value="userC">用户 C</option>
+            </select>
+
+            <label>请以正常节奏输入以下文字：</label>
+            <p class="target">hello world</p>
+            <input type="text" id="typeInput"
+                   placeholder="在此输入上方文字..." autocomplete="off">
+
+            <div class="count" id="countDisplay">已采集：0 条（本次会话）</div>
+
+            <div class="grid">
+                <button id="submitBtn" onclick="submitData()">提交采集样本</button>
+                <button class="secondary" onclick="resetCollect()">重新输入</button>
+            </div>
+            <button class="secondary" style="margin-top:0.5rem;width:100%"
+                    id="buildBtn" onclick="buildTemplates()">
+                构建 / 更新身份模板
+            </button>
+
+            <div class="status" id="collectStatus"></div>
+        </article>
+
+        <!-- ══════════ 身份认证面板 ══════════ -->
+        <article id="auth" class="tab-content">
+            <h3>第二步：验证身份</h3>
+
+            <label for="authUserSelect">声称身份（我是：）</label>
+            <select id="authUserSelect">
+                <option value="">-- 请选择 --</option>
+                <option value="userA">用户 A</option>
+                <option value="userB">用户 B</option>
+                <option value="userC">用户 C</option>
+            </select>
+
+            <label>请以正常节奏输入以下文字：</label>
+            <p class="target">hello world</p>
+            <input type="text" id="authInput"
+                   placeholder="在此输入上方文字..." autocomplete="off">
+
+            <div class="grid" style="margin-top:0.75rem">
+                <button id="authBtn" onclick="authenticate()">进行认证</button>
+                <button class="secondary" onclick="resetAuth()">重新输入</button>
+            </div>
+
+            <div class="result-box" id="authResult"></div>
+        </article>
+
+        <footer>
+            <small>Network Security Course Project &copy; 2026</small>
+        </footer>
+    </main>
+
+    <script>
+        const TARGET = "hello world";
+        let keyEvents  = [];   // 采集面板的按键事件列表
+        let authEvents = [];   // 认证面板的按键事件列表
+        let sessionCount = 0;
+
+        const typeInput = document.getElementById("typeInput");
+        const authInput = document.getElementById("authInput");
+
+        // ══ 标签切换 ══════════════════════════════════════════
+        function showTab(tab, btn) {
+            document.querySelectorAll('.tabs button')
+                .forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content')
+                .forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(tab).classList.add('active');
+            if (tab === 'collect') typeInput.focus();
+            else authInput.focus();
+        }
+
+        // ══ 退格撤销逻辑（修复版）════════════════════════════
+        // 找到最后一个 down 事件的 key，连同其对应的 up 一起删除
+        function removeLastChar(list) {
+            let lastDownIdx = -1;
+            for (let i = list.length - 1; i >= 0; i--) {
+                if (list[i].action === "down") { lastDownIdx = i; break; }
+            }
+            if (lastDownIdx === -1) return;
+            const lastKey = list[lastDownIdx].key;
+            list.splice(lastDownIdx, 1);   // 删 down
+            // 从原位置继续找对应的 up 并删除
+            for (let i = lastDownIdx; i < list.length; i++) {
+                if (list[i].action === "up" && list[i].key === lastKey) {
+                    list.splice(i, 1); break;
+                }
+            }
+        }
+
+typeInput.addEventListener("keydown", function(e) {
+    if (e.key === "Backspace") { removeLastChar(keyEvents); return; }
+    if (e.key.length === 1 && !e.repeat) {
+        keyEvents.push({ key: e.key, action: "down", timestamp: performance.now() });
+    }
+});
+typeInput.addEventListener("keyup", function(e) {
+    if (e.key.length === 1) {
+        keyEvents.push({ key: e.key, action: "up", timestamp: performance.now() });
+    }
+});
+
+authInput.addEventListener("keydown", function(e) {
+    if (e.key === "Backspace") { removeLastChar(authEvents); return; }
+    if (e.key.length === 1 && !e.repeat) {
+        authEvents.push({ key: e.key, action: "down", timestamp: performance.now() });
+    }
+});
+authInput.addEventListener("keyup", function(e) {
+    if (e.key.length === 1) {
+        authEvents.push({ key: e.key, action: "up", timestamp: performance.now() });
+    }
+});
+        // ══ 采集面板 ══════════════════════════════════════════
+        function resetCollect() {
+            typeInput.value = "";
+            keyEvents = [];
+            const el = document.getElementById("collectStatus");
+            el.className = "status";
+            el.innerText = "";
+            typeInput.focus();
+        }
+
+        function submitData() {
+            const userId  = document.getElementById("userSelect").value;
+            const inputVal = typeInput.value;
+            const statusEl = document.getElementById("collectStatus");
+
+            if (!userId) {
+                statusEl.className = "status err";
+                statusEl.innerText = "请先选择用户名！";
+                return;
+            }
+            if (inputVal !== TARGET) {
+                statusEl.className = "status err";
+                statusEl.innerText = `输入内容不对！请输入：${TARGET}`;
+                return;
+            }
+            if (keyEvents.length === 0) {
+                statusEl.className = "status err";
+                statusEl.innerText = "未检测到按键数据，请重新输入。";
+                return;
+            }
+
+            const btn = document.getElementById("submitBtn");
+            btn.disabled = true;
+            btn.innerText = "提交中...";
+
+            fetch("/collect", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ user_id: userId, events: keyEvents })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === "ok") {
+                    resetCollect();
+                    sessionCount++;
+                    document.getElementById("countDisplay").innerText =
+                        `已采集：${sessionCount} 条（本次会话）`;
+                    statusEl.className = "status ok";
+                    statusEl.innerText =
+                        `✓ 第 ${data.total} 条样本保存成功！` +
+                        (data.total < 32 ? `（至少采集 32 条，建议 50 条以上；当前 ${data.total} 条）` : "");
+                } else {
+                    statusEl.className = "status err";
+                    statusEl.innerText = "错误：" + data.error;
+                }
+            })
+            .catch(() => {
+                statusEl.className = "status err";
+                statusEl.innerText = "连接后端失败，请确认 app.py 已启动。";
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerText = "提交采集样本";
+            });
+        }
+
+        function buildTemplates() {
+            const statusEl = document.getElementById("collectStatus");
+            const btn = document.getElementById("buildBtn");
+            btn.disabled = true;
+            btn.innerText = "构建中...";
+
+            fetch("/build_templates", { method: "POST" })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    statusEl.className = "status err";
+                    statusEl.innerText = data.error;
+                    return;
+                }
+                const userCount = Object.keys(data.details || {}).length;
+                if (userCount === 0) {
+                    // data/ 目录下没有任何 CSV 文件
+                    statusEl.className = "status warn";
+                    statusEl.innerText = "⚠ 没有找到任何用户数据，请先采集再构建。";
+                } else {
+                    // 把每个用户的构建结果拼成一行展示
+                    const detail = Object.entries(data.details)
+                        .map(([uid, msg]) => `${uid}: ${msg}`)
+                        .join("　|　");
+                    statusEl.className = data.failed ? "status warn" : "status ok";
+                    statusEl.innerText = `构建结果：成功 ${data.built} 位，未成功 ${data.failed} 位。${detail}`;
+                }
+            })
+            .catch(() => {
+                statusEl.className = "status err";
+                statusEl.innerText = "连接后端失败，请确认 app.py 已启动。";
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerText = "构建 / 更新身份模板";
+            });
+        }
+
+        // ══ 认证面板 ══════════════════════════════════════════
+        function resetAuth() {
+            authInput.value = "";
+            authEvents = [];
+            const el = document.getElementById("authResult");
+            el.className = "result-box";
+            el.innerText = "";
+            authInput.focus();
+        }
+
+        function authenticate() {
+            const userId  = document.getElementById("authUserSelect").value;
+            const inputVal = authInput.value;
+            const resEl   = document.getElementById("authResult");
+
+            if (!userId) {
+                resEl.className = "result-box err";
+                resEl.innerText = "请先选择声称的身份！";
+                return;
+            }
+            if (inputVal !== TARGET) {
+                resEl.className = "result-box err";
+                resEl.innerText = `输入内容不对！请输入：${TARGET}`;
+                return;
+            }
+            if (authEvents.length === 0) {
+                resEl.className = "result-box err";
+                resEl.innerText = "未检测到按键数据，请重新输入。";
+                return;
+            }
+
+            const btn = document.getElementById("authBtn");
+            btn.disabled = true;
+            btn.innerText = "认证中...";
+
+            fetch("/auth", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ user_id: userId, events: authEvents })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    // 发生错误（如模板不存在）：报错，保留输入框内容
+                    resEl.className = "result-box warn";
+                    resEl.innerText = "⚠ " + data.error;
+                    return;  // 不清空输入，方便用户排查
+                }
+
+                // 正常认证结果：清空输入框
+                authEvents = [];
+                authInput.value = "";
+
+                const isPass  = data.passed;
+                const dist    = data.distance;
+                const thresh  = data.threshold;
+                // 距离条：距离越大越偏，最大显示到 thresh*2 的位置
+                const barPct  = Math.min(dist / (thresh * 2) * 100, 100).toFixed(1);
+
+                resEl.className = `result-box ${isPass ? 'ok' : 'err'}`;
+                resEl.innerHTML = `
+                    <strong>${isPass ? '✓ 认证通过' : '✗ 认证拒绝'}</strong><br><br>
+                    声称身份：<strong>${data.claimed}</strong><br>
+                    马氏距离：<strong>${dist}</strong>
+                    （阈值 ${thresh}，距离${isPass ? '<' : '≥'}阈值则${isPass ? '通过' : '拒绝'}）
+                    <div class="distance-bar-wrap" title="距离 / 阈值×2">
+                        <div class="distance-bar ${isPass ? 'bar-pass' : 'bar-fail'}"
+                             style="width:${barPct}%"></div>
+                    </div>
+                    <small style="color:inherit;opacity:0.7">
+                        距离条越短表示打字习惯越接近模板
+                    </small>
+                `;
+            })
+            .catch(() => {
+                resEl.className = "result-box err";
+                resEl.innerText = "连接后端失败，请确认 app.py 已启动。";
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerText = "进行认证";
+            });
+        }
+    </script>
 </body>
 </html>
